@@ -82,8 +82,9 @@ Les contributions sont les bienvenues ! Merci de proposer vos idées, correcti
 ## Contact
 
 - **Simplon Sénégal**
-- Email : contact@simplon.co
-- Site : [https://simplon.co/senegal](https://simplon.co/senegal)
+- Email : bigmabo61345@gmail.com
+- Téléphone :+221 78 186 02 90
+
 
 ---
 
