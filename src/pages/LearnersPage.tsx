@@ -1,6 +1,6 @@
-import  { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Search,  Plus, Eye, Edit, TrendingUp } from 'lucide-react';
+import { Search, Plus, Eye, Edit, TrendingUp } from 'lucide-react';
 import { Layout } from '../components/Layout';
 import { learnerService } from '../services/api';
 import { LearnerDetailsModal } from '../components/modals/LearnerDetailsModal';
@@ -33,12 +33,9 @@ export function LearnersPage() {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
 
-  useEffect(() => {
-    loadLearners();
-  }, []);
-
-  const loadLearners = async () => {
+  const loadLearners = useCallback(async () => {
     try {
+      setLoading(true);
       const response = await learnerService.getAll();
       setLearners(response.data);
     } catch (error) {
@@ -46,7 +43,11 @@ export function LearnersPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadLearners();
+  }, [loadLearners]);
 
   const handleViewDetails = (learner: Learner) => {
     setSelectedLearner(learner);
@@ -58,15 +59,20 @@ export function LearnersPage() {
     setShowEditModal(true);
   };
 
+  const handleLearnerUpdateSuccess = () => {
+    setShowEditModal(false);
+    loadLearners();
+  };
+
   const filteredLearners = learners.filter(learner => {
-    const matchesSearch = 
-      learner.user?.first_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      learner.user?.last_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      learner.user?.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      learner.promotion?.toLowerCase().includes(searchTerm.toLowerCase());
-    
+    const matchesSearch =
+      (learner.user?.first_name?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (learner.user?.last_name?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (learner.user?.email?.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (learner.promotion?.toLowerCase().includes(searchTerm.toLowerCase()));
+
     const matchesStatus = !statusFilter || learner.statut_insertion === statusFilter;
-    
+
     return matchesSearch && matchesStatus;
   });
 
@@ -74,13 +80,13 @@ export function LearnersPage() {
     const total = learners.length;
     const inserted = learners.filter(l => ['en_emploi', 'en_stage'].includes(l.statut_insertion)).length;
     const rate = total > 0 ? Math.round((inserted / total) * 100) : 0;
-    
+
     return { total, inserted, rate };
   };
 
   const stats = getInsertionStats();
 
-  if (loading) {
+  if (loading && learners.length === 0) {
     return (
       <Layout>
         <div className="flex items-center justify-center h-64">
@@ -97,7 +103,6 @@ export function LearnersPage() {
   return (
     <Layout>
       <div className="space-y-6">
-        {/* En-tête */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -119,7 +124,6 @@ export function LearnersPage() {
           </motion.button>
         </motion.div>
 
-        {/* Statistiques */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -192,7 +196,6 @@ export function LearnersPage() {
           </motion.div>
         </div>
 
-        {/* Filtres et recherche */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -227,7 +230,6 @@ export function LearnersPage() {
           </div>
         </motion.div>
 
-        {/* Liste des apprenants */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -326,7 +328,6 @@ export function LearnersPage() {
           )}
         </motion.div>
 
-        {/* Modales */}
         <LearnerDetailsModal
           isOpen={showDetailsModal}
           onClose={() => setShowDetailsModal(false)}
@@ -337,6 +338,7 @@ export function LearnersPage() {
           isOpen={showEditModal}
           onClose={() => setShowEditModal(false)}
           learner={selectedLearner}
+          onUpdateSuccess={handleLearnerUpdateSuccess}
         />
       </div>
     </Layout>

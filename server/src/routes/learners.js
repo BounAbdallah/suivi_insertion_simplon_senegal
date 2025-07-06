@@ -5,37 +5,66 @@ import { authenticateToken, authorizeRoles } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Récupérer tous les apprenants
+const formatLearnerWithUser = (learnerData) => {
+  if (!learnerData) return null;
+
+  const user = {
+    id: learnerData.user_id,
+    email: learnerData.email,
+    first_name: learnerData.first_name,
+    last_name: learnerData.last_name,
+    phone: learnerData.phone,
+    role: learnerData.role,
+    is_active: learnerData.is_active,
+    created_at: learnerData.user_created_at,
+    updated_at: learnerData.user_updated_at,
+  };
+
+  const formattedLearner = { ...learnerData };
+  delete formattedLearner.email;
+  delete formattedLearner.first_name;
+  delete formattedLearner.last_name;
+  delete formattedLearner.phone;
+  delete formattedLearner.role;
+  delete formattedLearner.is_active;
+  delete formattedLearner.user_created_at;
+  delete formattedLearner.user_updated_at;
+
+  formattedLearner.user = user;
+
+  return formattedLearner;
+};
+
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const connection = getConnection();
     const [learners] = await connection.execute(`
-      SELECT 
+      SELECT
         l.*,
-        u.email, u.first_name, u.last_name, u.phone
+        u.email, u.first_name, u.last_name, u.phone, u.role, u.is_active,
+        u.created_at as user_created_at, u.updated_at as user_updated_at
       FROM learners l
       JOIN users u ON l.user_id = u.id
       WHERE u.is_active = true
       ORDER BY l.created_at DESC
     `);
-
-    res.json(learners);
+    const formattedLearners = learners.map(learner => formatLearnerWithUser(learner));
+    res.json(formattedLearners);
   } catch (error) {
     console.error('Erreur lors de la récupération des apprenants:', error);
     res.status(500).json({ error: 'Erreur interne du serveur' });
   }
 });
 
-// Récupérer un apprenant par ID
 router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const connection = getConnection();
-
     const [learners] = await connection.execute(`
-      SELECT 
+      SELECT
         l.*,
-        u.email, u.first_name, u.last_name, u.phone, u.created_at as user_created_at
+        u.email, u.first_name, u.last_name, u.phone, u.role, u.is_active,
+        u.created_at as user_created_at, u.updated_at as user_updated_at
       FROM learners l
       JOIN users u ON l.user_id = u.id
       WHERE l.id = ? AND u.is_active = true
@@ -45,9 +74,9 @@ router.get('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Apprenant non trouvé' });
     }
 
-    // Récupérer l'historique d'insertion
+    const learnerData = learners[0];
     const [tracking] = await connection.execute(`
-      SELECT 
+      SELECT
         it.*,
         u.first_name as created_by_name, u.last_name as created_by_lastname
       FROM insertion_tracking it
@@ -56,20 +85,25 @@ router.get('/:id', authenticateToken, async (req, res) => {
       ORDER BY it.created_at DESC
     `, [id]);
 
-    const learner = learners[0];
-    learner.insertion_history = tracking;
+    const formattedLearner = formatLearnerWithUser(learnerData);
+    if (formattedLearner) {
+      formattedLearner.insertion_history = tracking;
+    } else {
+        return res.status(500).json({ error: 'Erreur lors du formatage des données de l\'apprenant.' });
+    }
 
-    res.json(learner);
+    res.json(formattedLearner);
   } catch (error) {
     console.error('Erreur lors de la récupération de l\'apprenant:', error);
     res.status(500).json({ error: 'Erreur interne du serveur' });
   }
 });
 
-// Mettre à jour le profil d'un apprenant
 router.put('/:id', authenticateToken, [
   body('promotion').optional().trim(),
   body('formation').optional().trim(),
+  body('date_debut').optional().isISO8601().withMessage('Date de début invalide (YYYY-MM-DD)'),
+  body('date_fin').optional().isISO8601().withMessage('Date de fin invalide (YYYY-MM-DD)'),
   body('competences').optional().trim(),
   body('experience').optional().trim(),
   body('adresse').optional().trim(),
@@ -77,7 +111,9 @@ router.put('/:id', authenticateToken, [
   body('region').optional().trim(),
   body('niveau_etude').optional().trim(),
   body('genre').optional().isIn(['homme', 'femme', 'autre']),
-  body('statut_insertion').optional().isIn(['en_recherche', 'en_emploi', 'en_stage', 'en_formation', 'autre'])
+  body('statut_insertion').optional().isIn(['en_recherche', 'en_emploi', 'en_stage', 'en_formation', 'autre']),
+  body('email').optional().isEmail().withMessage('Email invalide').normalizeEmail(),
+  body('phone').optional().trim().isMobilePhone('any', { strictMode: false }).withMessage('Numéro de téléphone invalide'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -88,9 +124,8 @@ router.put('/:id', authenticateToken, [
     const { id } = req.params;
     const connection = getConnection();
 
-    // Vérifier les permissions
     const [learners] = await connection.execute(
-      'SELECT user_id, statut_insertion FROM learners WHERE id = ?',
+      'SELECT l.user_id, l.statut_insertion, u.email as user_email, u.phone as user_phone FROM learners l JOIN users u ON l.user_id = u.id WHERE l.id = ?',
       [id]
     );
 
@@ -98,49 +133,67 @@ router.put('/:id', authenticateToken, [
       return res.status(404).json({ error: 'Apprenant non trouvé' });
     }
 
-    const learner = learners[0];
-    if (req.user.role !== 'admin' && req.user.role !== 'coach' && req.user.id !== learner.user_id) {
-      return res.status(403).json({ error: 'Accès non autorisé' });
+    const learnerRecord = learners[0];
+    const currentUserId = learnerRecord.user_id;
+
+    if (req.user.role !== 'admin' && req.user.role !== 'coach' && req.user.id !== currentUserId) {
+      return res.status(403).json({ error: 'Accès non autorisé à la modification de ce profil.' });
     }
 
     const {
       promotion, formation, date_debut, date_fin, competences, experience,
-      adresse, ville, region, date_naissance, genre, niveau_etude, statut_insertion
+      adresse, ville, region, date_naissance, genre, niveau_etude, statut_insertion,
+      email, phone
     } = req.body;
 
-    // Construire la requête de mise à jour
-    const updates = [];
-    const values = [];
-
-    const fields = {
+    const learnerUpdates = [];
+    const learnerValues = [];
+    const learnerFields = {
       promotion, formation, date_debut, date_fin, competences, experience,
       adresse, ville, region, date_naissance, genre, niveau_etude, statut_insertion
     };
 
-    Object.entries(fields).forEach(([key, value]) => {
+    Object.entries(learnerFields).forEach(([key, value]) => {
       if (value !== undefined) {
-        updates.push(`${key} = ?`);
-        values.push(value);
+        learnerUpdates.push(`${key} = ?`);
+        learnerValues.push(value);
       }
     });
 
-    if (updates.length === 0) {
-      return res.status(400).json({ error: 'Aucune donnée à mettre à jour' });
+    if (learnerUpdates.length > 0) {
+      learnerUpdates.push('updated_at = CURRENT_TIMESTAMP');
+      learnerValues.push(id);
+      await connection.execute(
+        `UPDATE learners SET ${learnerUpdates.join(', ')} WHERE id = ?`,
+        learnerValues
+      );
     }
 
-    updates.push('updated_at = CURRENT_TIMESTAMP');
-    values.push(id);
+    const userUpdates = [];
+    const userValues = [];
 
-    await connection.execute(
-      `UPDATE learners SET ${updates.join(', ')} WHERE id = ?`,
-      values
-    );
+    if (email !== undefined && email !== learnerRecord.user_email) {
+      userUpdates.push('email = ?');
+      userValues.push(email);
+    }
+    if (phone !== undefined && phone !== learnerRecord.user_phone) {
+      userUpdates.push('phone = ?');
+      userValues.push(phone);
+    }
 
-    // Si le statut d'insertion a changé, l'enregistrer dans l'historique
-    if (statut_insertion && statut_insertion !== learner.statut_insertion) {
+    if (userUpdates.length > 0) {
+      userUpdates.push('updated_at = CURRENT_TIMESTAMP');
+      userValues.push(currentUserId);
+      await connection.execute(
+        `UPDATE users SET ${userUpdates.join(', ')} WHERE id = ?`,
+        userValues
+      );
+    }
+
+    if (statut_insertion && statut_insertion !== learnerRecord.statut_insertion) {
       await connection.execute(
         'INSERT INTO insertion_tracking (learner_id, statut_precedent, nouveau_statut, created_by) VALUES (?, ?, ?, ?)',
-        [id, learner.statut_insertion, statut_insertion, req.user.id]
+        [id, learnerRecord.statut_insertion, statut_insertion, req.user.id]
       );
     }
 
@@ -151,7 +204,6 @@ router.put('/:id', authenticateToken, [
   }
 });
 
-// Ajouter une entrée dans l'historique d'insertion
 router.post('/:id/tracking', authenticateToken, authorizeRoles('admin', 'coach'), [
   body('nouveau_statut').isIn(['en_recherche', 'en_emploi', 'en_stage', 'en_formation', 'autre']),
   body('entreprise').optional().trim(),
@@ -175,7 +227,6 @@ router.post('/:id/tracking', authenticateToken, authorizeRoles('admin', 'coach')
     } = req.body;
     const connection = getConnection();
 
-    // Récupérer le statut actuel
     const [learners] = await connection.execute(
       'SELECT statut_insertion FROM learners WHERE id = ?',
       [id]
@@ -187,15 +238,13 @@ router.post('/:id/tracking', authenticateToken, authorizeRoles('admin', 'coach')
 
     const statut_precedent = learners[0].statut_insertion;
 
-    // Ajouter l'entrée dans l'historique
     await connection.execute(
-      `INSERT INTO insertion_tracking 
-       (learner_id, statut_precedent, nouveau_statut, entreprise, poste, type_contrat, salaire, date_debut, date_fin, commentaires, created_by) 
+      `INSERT INTO insertion_tracking
+       (learner_id, statut_precedent, nouveau_statut, entreprise, poste, type_contrat, salaire, date_debut, date_fin, commentaires, created_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, statut_precedent, nouveau_statut, entreprise, poste, type_contrat, salaire, date_debut, date_fin, commentaires, req.user.id]
     );
 
-    // Mettre à jour le statut de l'apprenant
     await connection.execute(
       'UPDATE learners SET statut_insertion = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
       [nouveau_statut, id]

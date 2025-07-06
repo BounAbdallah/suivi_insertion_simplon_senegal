@@ -1,4 +1,6 @@
-// Types basés sur la structure de la base de données
+// types.ts
+
+// Removed `import { ReactNode } from 'react';` as it was not used and not relevant for interface definitions here.
 
 export interface User {
   id: number;
@@ -32,7 +34,7 @@ export interface Learner {
   created_at: string;
   updated_at: string;
   // Relations
-  user?: User;
+  user: User; // 'user' is correctly made mandatory as per your key modification
   insertion_history?: InsertionTracking[];
 }
 
@@ -55,7 +57,7 @@ export interface Company {
   created_at: string;
   updated_at: string;
   // Relations
-  user?: User;
+  user?: User; // Keeping optional as a company might not always have its user data directly nested
   job_offers?: JobOffer[];
 }
 
@@ -147,6 +149,7 @@ export interface Document {
 }
 
 export interface InsertionTracking {
+  // Removed `[x: string]: ReactNode;` as it was incorrect for this context.
   id: number;
   learner_id: number;
   statut_precedent?: 'en_recherche' | 'en_emploi' | 'en_stage' | 'en_formation' | 'autre';
@@ -160,12 +163,14 @@ export interface InsertionTracking {
   commentaires?: string;
   created_by?: number;
   created_at: string;
-  // Relations
+  // Relations (ajouts pour le frontend)
+  created_by_name?: string;
+  created_by_lastname?: string;
   learner?: Learner;
   created_by_user?: User;
 }
 
-// Types pour les formulaires
+// Form data interfaces for creating/updating entities
 export interface LearnerFormData {
   promotion?: string;
   formation?: string;
@@ -180,6 +185,8 @@ export interface LearnerFormData {
   date_naissance?: string;
   genre?: 'homme' | 'femme' | 'autre';
   niveau_etude?: string;
+  email?: string; // Add email for learner updates
+  phone?: string; // Add phone for learner updates
 }
 
 export interface CompanyFormData {
@@ -242,7 +249,7 @@ export interface InsertionTrackingFormData {
   commentaires?: string;
 }
 
-// Types pour les statistiques
+// Types for statistics
 export interface DashboardStats {
   users: Array<{ role: string; count: number; active_count: number }>;
   insertion: Array<{ statut_insertion: string; count: number }>;
@@ -250,4 +257,4 @@ export interface DashboardStats {
   applications: Array<{ statut: string; count: number }>;
   events: Array<{ statut: string; count: number }>;
   monthly_insertions: Array<{ month: string; nouveau_statut: string; count: number }>;
-} 
+}
